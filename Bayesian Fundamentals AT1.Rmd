@@ -1,0 +1,143 @@
+---
+title: "Bayesian Fundamentals Analysis Task"
+author: "Scott Sun"
+date: "1/10/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("https://github.com/reyesem/reyesem.github.io/raw/master/files/MA483/MA483Setup.R")
+```
+
+Load the data as follows.
+```{r}
+receipts <- tibble(
+  Vehicle = 1:25,
+  `Hours Billed` = c(2, 1, 3, 2, 1,
+                     1, 4, 1, 2, 4,
+                     3, 1, 2, 5, 2,
+                     3, 2, 1, 3, 2,
+                     5, 6, 2, 5, 1))
+```
+
+### Graphical Summary
+
+```{r, fig.width=5, fig.asp=0.6}
+ggplot(data = receipts,
+       mapping = aes(x = `Hours Billed`)) +
+  geom_bar(aes(y = ..prop..), fill = "orange") +
+  labs(x = "Hours Billed",
+       y = "Proportion",
+       title = "Receipts' Hours Billed") +
+  theme_bw()
+```
+
+### Parameter / Model
+The length of time $Y \sim Exp(\lambda)$. Let the number of hours billed $C = \lceil Y \rceil$.
+
+The parameter of interest is $\lambda$, the average number of hours a vehicles would remain in the garage.
+
+We want to study $Pr(\frac{1}{\lambda} > 2|\boldsymbol{y})$.
+
+### Prior Distribution
+
+Given that
+$$
+\begin{aligned}
+1 &= \int_{0}^{\infty} \pi(\lambda) d\lambda \\
+  &= \int_{0}^{\infty} \frac{\Gamma(a+b)}{\Gamma(a)\Gamma(b)} e^{-a\lambda}(1-e^{-\lambda})^{b-1} d\lambda \\
+  &= \int_{0}^{\infty} \frac{\Gamma(a+b)}{\Gamma(a)\Gamma(b)} (e^{-\lambda})^{a-1} (1-e^{-\lambda})^{b-1} \cdot e^{-\lambda} d\lambda
+\end{aligned}
+$$
+
+Let $\theta = e^{-\lambda}$.
+$$1 = \int_{0}^{1} \frac{\Gamma(a+b)}{\Gamma(a)\Gamma(b)} \theta^{a-1}(1-\theta)^{b-1}d\theta$$
+Thus, $\theta \sim Beta(a,b)$
+
+Now, solve the hyperparameters by the following system of equations.
+$$
+\begin{cases}
+Pr(\frac{1}{\lambda} < 5) = Pr(\theta < e^{-1/5}) = 0.95 \\
+\\
+Pr(\frac{1}{\lambda} > 1/2) = Pr(\theta > e^{-2}) = 0.95 \\
+\end{cases}
+$$
+
+```{r}
+fn <- function(params) {
+  a <- params[1]
+  b <- params[2]
+  
+  eq1 <- pbeta(exp(-1/5), shape1 = a, shape2 = b)
+  eq2 <- 1 - pbeta(exp(-2), shape1 = a, shape2 = b)
+  
+  (0.95-eq1)^2 + (0.95-eq2)^2
+}
+
+optim.result1 <- optim(c(1,1), fn)
+optim.result1$par %>%
+  round(3)
+```
+
+$$
+\begin{aligned}
+a &= 2.212 \\
+b &= 2.506
+\end{aligned}
+$$
+
+### Posterior
+
+Before solve the posterior distribution, we shall derive the likelihood.
+
+$$
+\begin{aligned}
+f_C(c|\lambda)
+&=Pr(C = c|\lambda)  \\
+&= Pr(\lceil Y \rceil = c|\lambda) \\
+&= Pr(c-1 < Y \leq c|\lambda) \\
+&= \int_{c-1}^{c} \lambda e^{-\lambda y} dy \\
+&= (e^{\lambda} - 1)e^{-\lambda c} = (\frac{1}{\theta} - 1)\theta^c \\
+&= f_C(c|\theta)
+\end{aligned}
+$$
+
+Now,
+$$
+\begin{aligned}
+\pi(\theta|\boldsymbol{c}) 
+&\propto f(\boldsymbol{c}|\theta) \cdot \pi(\theta) \\
+&\propto (\frac{1}{\theta} - 1)^n \theta^{n\bar{c}} \cdot \theta^{a-1}(1 - \theta)^{b-1} \\
+&\propto \theta^{n\bar{c}+a-1} (1-\theta)^{b-1}(\frac{1}{\theta}-1)^n \cdot \frac{\theta^n}{\theta^n}\\
+&\propto \theta^{n\bar{c}-n+a-1}(1-\theta)^{n+b-1}
+\end{aligned}
+$$
+Therefore, $\theta|\boldsymbol{c} \sim Beta(n\bar{c}-n+a, n+b)$.
+
+### Conclusion
+Since the question of interest is $Pr(\frac{1}{\lambda} > 2|\boldsymbol{c})$,
+
+$$
+\begin{aligned}
+Pr(\frac{1}{\lambda} > 2|\boldsymbol{c}) 
+&= Pr(\theta > e^{-1/2}|\boldsymbol{c}) \\
+&= 1 - \int_{0}^{e^{-1/2}}\pi(\theta|\boldsymbol{c})d\theta
+\end{aligned}
+$$
+
+```{r}
+a <- optim.result1$par[1]
+b <- optim.result1$par[2]
+n <- length(receipts$`Hours Billed`)
+c_bar <- mean(receipts$`Hours Billed`)
+
+post_alpha <- n*c_bar-n+a
+post_beta <- n+b
+
+(1 - pbeta(exp(-1/2), shape1 = post_alpha, shape2 = post_beta)) %>%
+  round(3)
+```
+
+Given the prior knowledge and the data provided, the probability that vehicles on average remain parked for more than 2 hours during an event is 0.461.
+

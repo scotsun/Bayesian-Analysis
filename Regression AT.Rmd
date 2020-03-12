@@ -1,0 +1,184 @@
+---
+title: "Regression AT"
+author: "Scott Sun"
+date: "2/18/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("https://github.com/reyesem/reyesem.github.io/raw/master/files/MA483/MA483Setup.R")
+options(mc.cores = 3)
+```
+
+```{r}
+avengers <- read.csv("Avengers.csv")
+```
+
+### Graphical Summary
+
+```{r, fig.width=5, fig.asp=0.6}
+avengers <- avengers %>%
+  mutate(t = Weekend - 1)
+
+qplot(data = avengers,
+      x = t, y = Amount, color = Movie,
+      geom = "point") +
+  geom_line(aes(group = Movie)) +
+  scale_color_manual(values = c("darkorchid4", "brown1")) +
+  labs(x = "Number of weekends after the release",
+       y = "Box office during weekend",
+       title = "The decaying curve of box office during weekend") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+According to the graph above, the weekend earnings of both Avenger movies decayed exponentially.
+
+### Parameter and Model
+
+Let $A_t$ represent the amount the film earns during the i-th weekend after the release.
+
+Assume the following model on $A_t$:
+$$
+\begin{aligned}
+A_t &\sim N(\mu_t, \sigma^2) \\
+\\
+\mu_t &= \alpha_j\exp((\beta_0 + \beta_1\mathbb{I}(\text{End Game})_t)\cdot t)
+\end{aligned}
+$$
+where
+$$
+\begin{aligned}
+\alpha_{1} &:=  \text{amount earned by End Game in the first weekend}\\
+\alpha_{2} &:=  \text{amount earned by Infinity War in the first weekend}\\
+\beta_0,\beta_1 &< 0\end{aligned}
+$$
+
+### Prior Distribution
+
+$$
+\begin{aligned}
+\sigma &\sim \text{half-Cauchy}(0, 1) \\
+\beta_0, \beta_1 &\sim \text{half-Cauchy}(0, 1)
+\end{aligned}
+$$
+
+### Sample from Posterior Distribution
+
+```{stan output.var="StanAvengers0", eval=FALSE}
+data{
+  int<lower = 0> N;
+  real<lower = 0> a[2];
+  int<lower = 0, upper = 1> EndGame[N];
+  real Amount[N];
+  int Time[N];
+}
+
+parameters{
+  real<upper = 0> beta0;
+  real<lower = 0> sigma;
+}
+
+model{
+  real mu;
+  sigma ~ cauchy(0, 1);
+  beta0 ~ cauchy(0, 1);
+  
+  for (i in 1:N) {
+    if (EndGame[i] == 0)
+      mu = a[1] * exp(beta0 * Time[i]);
+    else
+      mu = a[2] * exp(beta0 * Time[i]);
+    
+    Amount[i] ~ normal(mu, sigma);
+  }
+}
+```
+
+
+```{stan output.var="StanAvengers1", eval=FALSE}
+data{
+  int<lower = 0> N;
+  real<lower = 0> a[2];
+  int<lower = 0, upper = 1> EndGame[N];
+  real Amount[N];
+  int Time[N];
+}
+
+parameters{
+  real<upper = 0> beta0;
+  real<upper = 0> beta1;
+  real<lower = 0> sigma;
+}
+
+model{
+  real mu;
+  sigma ~ cauchy(0, 1);
+  beta0 ~ cauchy(0, 1);
+  beta1 ~ cauchy(0, 1);
+  
+  for (i in 1:N) {
+    if (EndGame[i] == 0)
+      mu = a[1] * exp((beta0 + beta1 * EndGame[i])*Time[i]);
+    else
+      mu = a[2] * exp((beta0 + beta1 * EndGame[i])*Time[i]);
+    
+    Amount[i] ~ normal(mu, sigma);
+  }
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanAvengers0, "StanAvengers0.rds")
+saveRDS(StanAvengers1, "StanAvengers1.rds")
+```
+
+```{r}
+StanAvengers0 <- readRDS("StanAvengers0.rds")
+StanAvengers1 <- readRDS("StanAvengers1.rds")
+```
+
+```{r}
+a <- filter(avengers, t == 0) %>%
+  select(Amount) %>%
+  unlist() %>%
+  unname()
+
+avengers <- avengers %>%
+  mutate(Movie = ifelse(Movie == "Endgame", 1, 0))
+
+dataList.avengers <- list(N = nrow(avengers),
+                          a = a,
+                          EndGame = avengers$Movie,
+                          Amount = avengers$Amount,
+                          Time = avengers$t)
+```
+
+```{r}
+fit.avengers0 <- stan(model_code = StanAvengers0@model_code,
+                     data = dataList.avengers)
+fit.avengers1 <- stan(model_code = StanAvengers1@model_code,
+                     data = dataList.avengers)
+```
+
+```{r}
+fit.avengers0
+```
+
+```{r}
+fit.avengers1
+```
+
+\pagebreak
+
+### Conclusion
+```{r}
+evidence.avengers0 <- bridge_sampler(fit.avengers0, silent = TRUE)
+evidence.avengers1 <- bridge_sampler(fit.avengers1, silent = TRUE)
+post_prob(evidence.avengers0, evidence.avengers1,
+          model_names = c("H0", "H1")) %>%
+  round(6)
+```
+
+Therefore, we have strong evidence that the decay rates are different. The weekend earnings of Avengers: Infinity War and Avengers: Endgame have different behavior.

@@ -1,0 +1,180 @@
+---
+title: "Comparing Groups AT"
+author: "Scott Sun"
+date: "2/17/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("https://github.com/reyesem/reyesem.github.io/raw/master/files/MA483/MA483Setup.R")
+```
+
+```{r}
+mm <- tibble(
+  Type  = c(rep("plain", 6), rep("peanut butter", 6)),
+  Color = rep(c("red", "orange", "yellow", "green", "blue", "brown"), 2),
+  Count = c(20, 12, 24, 26, 16, 9,
+            11,  5,  9,  9,  7, 7)
+)
+```
+
+### Graphical Summary 
+
+```{r}
+ggplot(data = mm,
+       aes(x = Color, y = Count, fill = Type)) +
+  geom_bar(stat = "identity", position="dodge") +
+  scale_fill_manual(values = c("cadetblue1", "cadetblue")) +
+  labs(x = "Color of the M&M bean",
+       y = "Count",
+       fill = "",
+       title = "M&M beans color distribution in two different types of packet") +
+  theme_bw()
+```
+
+Based on graphic above, the color distributions of two packets seem different. Besides, peanut butter packet has more beans than the plain packet
+
+### Parameters and Model
+
+Let $\boldsymbol{Y}_{1}$ be a vector of counts for the peanut butter packet.
+
+Let $\boldsymbol{Y}_{2}$ be a vector of counts for the plain packet.
+
+Let $\boldsymbol{\theta}_{j}$ be the probability distribution of color for j-type packet, where
+$$\sum_{i=1}^{k}\boldsymbol\theta_{j}[i] = 1$$
+
+$$
+\begin{aligned}
+\boldsymbol{Y}_1 &\sim Multinomial(\boldsymbol{\theta}_1) \\
+\boldsymbol{Y}_2 &\sim Multinomial(\boldsymbol{\theta}_2) \\
+\boldsymbol{Y}_1 &\perp\!\!\!\perp \boldsymbol{Y}_2
+\end{aligned}
+$$
+
+The question of interest is to test the following hypothesis test:
+$$
+H_{0}:\boldsymbol{\theta}_1 = \boldsymbol{\theta}_2 ~~~~~~~ 
+H_1: \boldsymbol{\theta}_1 \neq \boldsymbol{\theta}_2
+$$
+
+### Prior Distribution
+Based on the property of $\boldsymbol{\theta}_j$, assume that
+$$
+\begin{aligned}
+\boldsymbol{\theta}_j &\sim Dirichlet(\boldsymbol{\alpha}) \\
+\boldsymbol{\theta}_1 &\perp\!\!\!\perp \boldsymbol{\theta}_2
+\end{aligned}
+$$
+
+Apart from that, also assume $\alpha_1 = \alpha_2 = \alpha_3 = \alpha_4 = 1$.
+
+### Sample from Posterior distribution
+
+Under $H_0$, let $\boldsymbol{\theta}_1 = \boldsymbol{\theta}_2 = \boldsymbol{\theta}$.
+$$
+\begin{aligned}
+\pi(\boldsymbol{\Theta}|\boldsymbol{y}) 
+&\propto f(\boldsymbol{y}|\boldsymbol{\Theta}) \cdot \pi(\boldsymbol{\Theta}) \\
+&= f(\boldsymbol{y}_1|\boldsymbol{\theta})f(\boldsymbol{y}_2|\boldsymbol{\theta}) \cdot
+\pi(\boldsymbol{\theta}) & \text{due to indep}
+\end{aligned}
+$$
+
+
+Under $H_1$,
+$$
+\begin{aligned}
+\pi(\boldsymbol{\Theta}|\boldsymbol{y}) 
+&\propto f(\boldsymbol{y}|\boldsymbol{\Theta}) \cdot \pi(\boldsymbol{\Theta}) \\
+&= f(\boldsymbol{y}_1|\boldsymbol{\theta}_1)f(\boldsymbol{y}_2|\boldsymbol{\theta}_2) \cdot
+\pi(\boldsymbol{\theta}_1)\pi(\boldsymbol{\theta}_2) & \text{due to indep}
+\end{aligned}
+$$
+
+```{stan output.var="StanMM0", eval = FALSE}
+data {
+  int<lower = 0> K;
+  int<lower = 0> count_1[K];
+  int<lower = 0> count_2[K];
+  vector[K] alpha;
+}
+
+parameters{
+  simplex[K] theta;
+}
+
+model{
+  target += dirichlet_lpdf(theta | alpha);
+  target += multinomial_lpmf(count_1 | theta) + 
+          multinomial_lpmf(count_2 | theta);
+}
+```
+
+```{stan output.var="StanMM1", eval = FALSE}
+data {
+  int<lower = 0> K;
+  int<lower = 0> count_1[K];
+  int<lower = 0> count_2[K];
+  vector[K] alpha;
+}
+
+parameters{
+  simplex[K] theta_1;
+  simplex[K] theta_2;
+}
+
+model{
+  target += dirichlet_lpdf(theta_1 | alpha) + 
+          dirichlet_lpdf(theta_2 | alpha);
+  target += multinomial_lpmf(count_1 | theta_1) + 
+          multinomial_lpmf(count_2 | theta_2);
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanMM0, "StanMM0.rds")
+saveRDS(StanMM1, "StanMM1.rds")
+```
+
+```{r}
+StanMM0 <- readRDS("StanMM0.rds")
+StanMM1 <- readRDS("StanMM1.rds")
+
+dataList.MM <- list(
+  K = length(table(mm$Color)),
+  count_1 = filter(mm, Type == "peanut butter") %>% 
+    select(Count) %>% 
+    unlist() %>% 
+    unname(),
+  count_2 = filter(mm, Type == "plain") %>% 
+    select(Count) %>% 
+    unlist() %>% 
+    unname(),
+  alpha = rep(1, 6)
+    )
+
+fit.mm0 <- stan(model_code = StanMM0@model_code,
+                data = dataList.MM)
+fit.mm1 <- stan(model_code = StanMM1@model_code,
+                data = dataList.MM)
+```
+
+### Conclusion
+```{r}
+fit.mm0
+```
+
+```{r}
+fit.mm1
+```
+
+```{r}
+evidence.mm0 <- bridge_sampler(fit.mm0, silent = TRUE)
+evidence.mm1 <- bridge_sampler(fit.mm1, silent = TRUE)
+post_prob(evidence.mm0, evidence.mm1,
+          model_names = c("H0", "H1")) %>%
+  round(3)
+```
+
+Therefore, there is strong evidence that the color distributions of two packet are not different.

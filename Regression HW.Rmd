@@ -1,0 +1,393 @@
+---
+title: "Regression HW"
+author: "Scott Sun"
+date: "2/21/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("https://github.com/reyesem/reyesem.github.io/raw/master/files/MA483/MA483Setup.R")
+options(mc.cores = 3)
+```
+
+## Concepts
+### Problem 2 (Accessing Conditions)
+Based on the residual vs. fitted plot, points deviate from the 0 horizontal line systematically. Therefore, the errors do not have mean of 0, and this implies that the regression model is problematic.
+
+### Problem 3 (Model Specification)
+The model can be rewrite as follows.
+$$
+\begin{aligned}
+Y_i | \text{Predictors}_i, \boldsymbol{\beta} &\sim Poisson(\eta_i) \\
+\\
+\log(\eta_i) &= \beta_0 + \beta_1\mathbb{I}(\text{i-th obs is from instructor 2}) + \\
+&\beta_2\mathbb{I}(\text{i-th obs is from instructor 3})
+\end{aligned}
+$$
+
+### Problem 4 (Interpretation)
+$\beta_0$ represents the average reading time for all young male students at the age of 8.
+
+## Computations
+### Problem 5 (Cherry Trees)
+```{r}
+data("trees")
+```
+
+```{stan output.var="StanTree", eval=FALSE}
+data{
+  int<lower = 0> N;
+  real Girth[N];
+  real Volume[N];
+}
+
+parameters{
+  real beta0;
+  real beta1;
+  real<lower = 0> sigma;
+}
+
+model{
+  real mu;
+  beta0 ~ cauchy(0, 10);
+  beta1 ~ cauchy(0, 10);
+  sigma ~ cauchy(0, 10);
+  
+  for (i in 1:N) {
+    mu = beta0 + beta1 * Girth[i];
+    Volume[i] ~ normal(mu, sigma);
+  }
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanTree, "StanTree.rds")
+```
+
+```{r}
+StanTree <- readRDS("StanTree.rds")
+```
+
+```{r}
+dataList.trees <- list(N = nrow(trees),
+                       Girth = trees$Girth,
+                       Volume = trees$Volume)
+fit.trees <- stan(model_code = StanTree@model_code,
+                  data = dataList.trees)
+fit.trees
+```
+
+```{r}
+treeParam.df <- stan_to_df(fit.trees)
+hdi(treeParam.df$beta1, credMass = 0.95) %>%
+  round(3)
+```
+
+Therefore, the 95% credible interval is (4.529, 5.494).
+
+### Problem 6 (Cherry Trees, Cont.)
+```{r, fig.width=5, fig.asp=0.6}
+beta_hat <- treeParam.df %>%
+  select(starts_with("beta")) %>%
+  summarise_all(median) %>%
+  as.numeric()
+
+trees <- trees %>%
+  mutate(Fitted = beta_hat[1] + beta_hat[2]*Girth,
+         Residuals = Volume - Fitted)
+
+ggplot(data = trees,
+       aes(x = Fitted, y = Residuals)) +
+  geom_point() +
+  geom_smooth(formula = 'y ~ x', method = 'loess') +
+  labs(x = "Predicted volume of trees",
+       y = "Residuals",
+       title = "Residuals vs. Predicted values") +
+  theme_bw()
+```
+
+According to the plot above, points have systematic deviation from the horizontal line. This implies that the regression model may be problematric.
+
+### Problem 6 (Cherry Tree, Concluded)
+```{r}
+post.volumes <- rnorm(nrow(treeParam.df),
+                      treeParam.df$beta0 + treeParam.df$beta1 * 15,
+                      treeParam.df$sigma)
+mean(post.volumes > 45)
+```
+
+Therefore $\hat{Pr}(Volume > 45|Birth = 15) =$ `r round(mean(post.volumes > 45), 3)`
+
+## Complete Analysis
+### Problem 9 (Car Lot)
+```{r}
+autospecs <- read.csv("AutoSpecs.csv")
+```
+
+`Combined.MPG` will be included into the model as the sales manager is interested in examine its effect on the response. Thus, `City.MPG` and `Hwy.MPG` will be excluded from the mode since they are repetitive to `Combined.MPG`. `Total.Volume` will be used as another predictor. As the question of interest is to compare fuel type's and fuel economy's influences on cost, `Fuel` is included as a categorical predictor.
+
+Therefore, we fit a model as follows.
+$$
+\begin{aligned}
+(Retail...1000.)_i &\sim N(\mu_i, \sigma^2) \\
+\mu_i &= \beta_0 + \beta_1(Combined.MPG)_i + \beta_2(Total.Volume)_i +\beta_3\mathbb{I}(\text{i-th car is Hybrid}) \\
+\\
+\pi(\boldsymbol{\beta}, \sigma^2) \propto \frac{1}{\sigma^2}
+\end{aligned}
+$$
+
+```{stan output.var="StanAutospecs", eval=FALSE}
+data{
+  int<lower = 0> N;
+  int<lower = 0> p;
+  vector[N] Retail;
+  matrix[N, p] X;
+}
+
+transformed data{
+  matrix[N, p] Qstar;
+  matrix[p, p] Rstar;
+  matrix[p, p] RstarInv;
+  
+  Qstar = qr_Q(X)[, 1:p] * sqrt(N - 1);
+  Rstar = qr_R(X)[1:p, ] / sqrt(N - 1);
+  RstarInv = inverse(Rstar);
+}
+
+parameters{
+  real beta0;
+  vector[p] theta;      // scaled coefficients
+  real<lower = 0> sigma;
+}
+
+model{
+  target += -2*log(sigma);
+  target += normal_lpdf(Retail | Qstar*theta + beta0, sigma);
+}
+
+generated quantities{
+  vector[p] beta;
+  beta = RstarInv * theta; // actual coefficients
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanAutospecs, "StanAutospecs.rds")
+```
+
+```{r}
+StanAutospecs <- readRDS("StanAutospecs.rds")
+```
+
+```{r}
+autospecs <- autospecs %>%
+  mutate(Hybrid = ifelse((Fuel == "Hybrid"), 1, 0))
+
+dataList.autospecs <- list(N = nrow(autospecs),
+                           p = 3,
+                           Retail = autospecs$Retail...1000.,
+                           X = cbind(autospecs$Combined.MPG,
+                                     autospecs$Total.Volume,
+                                     autospecs$Hybrid))
+
+fit.autospecs <- stan(model_code = StanAutospecs@model_code,
+                data = dataList.autospecs,
+                iter = 5000,
+                warmup = 1000)
+
+fit.autospecs
+```
+
+Therefore, after we accounted for the size of vehicles, fuel type has larger influence on the cost than fuel economy.
+
+### Problem 10 (Air Quality)
+
+```{r}
+data("airquality")
+airquality <- filter(airquality, !is.na(Ozone))
+```
+
+According to the context, assume a model as follows.
+$$
+\begin{aligned}
+(Ozone)_i &\sim t(\nu, \mu, \sigma) \\
+\mu &= \beta_0 + \beta_1(Wind)_i + \beta_2(Temp)_i, \text{where}~\beta_j \sim 1 \\
+\sigma &\sim 1 \\
+(\nu-1) &\sim Exp(1)
+\end{aligned}
+$$
+
+```{stan output.var="StanAir", eval=FALSE}
+data{
+  int<lower = 0> N;
+  int<lower = 0> p;
+  vector[N] Ozone;
+  matrix[N, p] X;
+}
+
+transformed data{
+  matrix[N, p] Qstar;
+  matrix[p, p] Rstar;
+  matrix[p, p] RstarInv;
+  
+  Qstar = qr_Q(X)[, 1:p] * sqrt(N - 1);
+  Rstar = qr_R(X)[1:p, ] / sqrt(N - 1);
+  RstarInv = inverse(Rstar);
+}
+
+parameters{
+  real beta0;
+  vector[p] theta;      // scaled coefficients
+  real<lower = 0> sigma;
+  real<lower = 1> nu;
+}
+
+model{
+  target += log(nu - 1) + (nu - 1);
+  target += student_t_lpdf(Ozone | nu, Qstar*theta + beta0, sigma);
+}
+
+generated quantities{
+  vector[p] beta;
+  beta = RstarInv * theta; // actual coefficients
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanAir, "StanAir.rds")
+```
+
+```{r}
+StanAir <- readRDS("StanAir.rds")
+```
+
+```{r}
+dataList.air <- list(N = nrow(airquality),
+                     p = 2,
+                     Ozone = airquality$Ozone,
+                     X = cbind(airquality$Wind,
+                               airquality$Temp))
+fit.air <- stan(model_code = StanAir@model_code,
+                data = dataList.air,
+                control = list(adapt_delta = 0.99))
+fit.air
+```
+
+The process has divergent transitions after the warmup period, Besides, Rhat values were extremly high for all parameters. Therefore, we should not rely on the results.
+
+### Problem 12 (Body Fat)
+
+```{r}
+bodyfat <- read.csv("BodyFatPercentage.csv")
+```
+
+```{stan output.var="StanBMI", eval=FALSE}
+data{
+ vector[3] a;
+ int<lower = 0> N;
+ int<lower = 0, upper = 1> Activity[N, 3];
+ vector[N] BMI;
+}
+
+parameters{
+  simplex[3] theta;
+  real alpha[3];
+  real<lower = 0> phi;
+}
+
+model{
+  real eta;
+  target += dirichlet_lpdf(theta | a);
+  target += normal_lpdf(alpha | 22, 4);
+  for (i in 1:N) {
+    target += multinomial_lpmf(Activity[i,] | theta);
+    eta = a[1]*Activity[i,1] + a[2]*Activity[i,2] + a[3]*Activity[i,3];
+    target += normal_lpdf(BMI[i] | eta, phi);
+  }
+}
+```
+
+```{stan output.var="StanBodyfat", eval=FALSE}
+data{
+  int<lower = 0> N;
+  vector[N] Bodyfat;
+  int<lower = 0, upper = 1> Activity[N, 3];
+  vector[N] BMI;
+}
+
+parameters{
+  vector[5] beta;
+  real<lower = 0> sigma;
+}
+
+model{
+  real mu;
+  for (j in 3:5) {
+    beta[j] ~ normal(30, 4);
+  }
+  for (i in 1:N) {
+    mu = beta[1]*(BMI[i] - mean(BMI)) + beta[2]*(BMI[i] - mean(BMI))^2 +
+      beta[3]*Activity[i, 1] + beta[4]*Activity[i, 2] + 
+      beta[5]*Activity[i, 3];
+    Bodyfat[i] ~ normal(mu, sigma);  
+  }
+}
+
+```
+
+```{r, eval=FALSE}
+saveRDS(StanBMI, "StanBMI.rds")
+saveRDS(StanBodyfat, "StanBodyfat.rds")
+```
+
+```{r}
+StanBMI <- readRDS("StanBMI.rds")
+StanBodyfat <- readRDS("StanBodyfat.rds")
+```
+
+```{r}
+low <- ifelse(bodyfat$Activity_Level == "low", 1, 0)
+medium <- ifelse(bodyfat$Activity_Level == "medium", 1, 0)
+high <- ifelse(bodyfat$Activity_Level == "high", 1, 0)
+dataList.BMI <- list(a = c(1, 1, 1),
+                     N = nrow(bodyfat),
+                     Activity = cbind(low, medium, high),
+                     BMI = bodyfat$BMI)
+fit.bmi <- stan(model_code = StanBMI@model_code,
+                data = dataList.BMI)
+```
+
+```{r}
+dataList.bodyfat <- list(N = nrow(bodyfat),
+                         Bodyfat = bodyfat$Percent_Fat,
+                         Activity = cbind(low, medium, high),
+                         BMI = bodyfat$BMI)
+fit.bodyfat <- stan(model_code = StanBodyfat@model_code,
+                    data = dataList.bodyfat)
+```
+
+```{r}
+fit.bmi
+```
+
+```{r}
+fit.bodyfat
+```
+
+```{r}
+df1 <- as.data.frame(fit.bmi)
+df1 <- df1[, -ncol(df1)]
+df2 <- as.data.frame(fit.bodyfat)
+df2 <- df2[, -ncol(df2)]
+df <- cbind(df1, df2)
+
+newBMI <- rnorm(nrow(df), df$`alpha[3]`, df$phi)
+newBodyfat <- rnorm(
+  nrow(df),
+  df$`beta[1]`*(newBMI - mean(bodyfat$BMI)) + df$`beta[2]`*(newBMI - mean(bodyfat$BMI)) + df$`beta[5]`,
+  df$sigma)
+hdi(newBodyfat)
+```
+
+**Clearly it is incorrect**

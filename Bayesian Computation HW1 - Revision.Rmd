@@ -1,0 +1,350 @@
+---
+title: "Bayesian Computation HW1"
+author: "Scott Sun"
+date: "1/22/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("https://github.com/reyesem/reyesem.github.io/raw/master/files/MA483/MA483Setup.R")
+set.seed(1000)
+```
+
+## Revision on 3 & 4 
+
+### Problem 3 (Higher Posterior)
+During each iteration in the Metropolis Algorithm, we calculate the ratio of prospect value's density to current state's density. The calculation is given as follows. 
+$$
+\begin{aligned}
+A(\theta^*, \theta^{(k-1)}) 
+&= \frac{\pi(\boldsymbol{\theta}^*|\boldsymbol{x})}
+{\pi(\boldsymbol{\theta}^{(k-1)}|\boldsymbol{x})} \\ 
+&= \frac{f(\boldsymbol{x}|\boldsymbol\theta^*)\cdot\pi(\boldsymbol\theta^*)}
+{f(\boldsymbol{x}|\boldsymbol\theta^{(k-1)})\cdot\pi(\boldsymbol\theta^{(k-1)})} 
+&\text{, due to the cancellation of the scaling factor}
+\end{aligned}  
+$$  
+This implies that we do not need to know the coefficients in front of posterior distributions.
+
+### Problem 4 (Starting Values)
+An analyst can make a trace plot for the samples from the posterior distribution and check if different chains are well-mixed. One can also check `Rhat` in analysis summary. A large value of `Rhat` indicates an improper mixing of chains.
+
+## Concepts
+### Problem 1 (Answering the Phone)
+The code estimate the probability that a phone is picked up given the volume is greater than 50 percent. 
+
+### Problem 3 (Higher Posterior)
+During each iteration in the Metropolis Algorithm, we calculate the ratio of prospect value's density to current state's density. We can also rewrite the ratio as follows. 
+$$
+A(\theta^*, \theta^{(k-1)}) = 
+\frac{f(\boldsymbol{x}|\boldsymbol\theta^*)*\pi(\boldsymbol\theta^*)}
+{f(\boldsymbol{x}|\boldsymbol\theta^{(k-1)})*\pi(\boldsymbol\theta^{(k-1)})}
+$$  
+This implies that we do not need to know the coefficients in front of posterior distributions.
+
+### Problem 4 (Starting Values)
+Even though a MCMC process depends on an intial value, we always set a burn-in period, which include the starting value, for the chain. Outputs generated during the burn-in period would not be used for estimation and inference. Therefore, starting values' variability will not affect the analysis result.
+
+## Computation
+### Problem 5 (Games)
+```{r}
+game <- function(k, n, theta) {
+  winning_number <- replicate(n, {
+    x <- rexp(k, theta)
+    max(x)
+    }
+  )
+  min(winning_number)
+}
+
+replicate(10000, game(25, 4, 5)) %>%
+  mean() %>%
+  round(2)
+```
+
+### Problem 7 (Games, Continued)
+Let $Y = \max\{X_{1}, ...,X_{k}\}$.
+
+Then, pdf of Y can be derived as follows.
+$$
+\begin{aligned}
+F_{Y}(y|\theta) 
+&= \Pr(Y<y) \\
+&= \Pr(X_{1} < y, X_{2} < y,...,X_{k}<y)~~~~\text{since }Y = X_{(k)} \\
+&= \prod_{i=1}^{k}\Pr(X_{i}<y)~~~~\text{due to indep} \\
+&= (1-e^{-\theta y})^k
+\end{aligned}
+$$
+
+Therefore,
+$$f(y|\theta) = k(1-e^{-\theta y})\theta e^{-\theta y}$$
+
+```{r}
+games <- tibble(
+  winner = c(2.65891, 2.78581, 2.79174, 2.80867,
+             2.84470, 2.84865, 2.90131, 2.90170)
+)
+```
+
+```{r}
+logpost <- function(theta, x) {
+  k <- 25
+  loglike <- sum(log(k) + (k-1)*pexp(x, theta, log.p = TRUE) + dexp(x, theta, log = TRUE))
+  logprior <- 0
+  
+  loglike + logprior
+}
+
+hmc_sampling <- function(x, sigma, t, n) {
+  # x: obs data
+  # sigma: sd of Gaussian transitional kernal
+  # t: burn-in period
+  # n: expected sample size
+
+  theta0 <- runif(1, min = 0, max = 1)
+  theta_sample <- c(theta0)
+  
+  cur_theta <- theta0
+  for (i in 1:(t+n)) {
+    prop_theta <- rnorm(1, mean = cur_theta, sd = sqrt(0.1))
+    u <- runif(1, min = 0, max = 1)
+    r <- exp(logpost(prop_theta, x) - logpost(cur_theta, x))
+    if (u < r) {
+      cur_theta <- prop_theta
+      theta_sample <- append(theta_sample, cur_theta)
+    }
+    else {
+      theta_sample <- append(theta_sample, cur_theta)
+    }
+  }
+  return(theta_sample[(t+1):(t+n)])
+}
+```
+
+```{r}
+thetas <- hmc_sampling(games$winner, 0.1, 3000, 5000)
+mean(thetas) %>% 
+  round(3)
+```
+
+### Problem 8 (Games, Completed)
+
+```{stan output.var="StanGames", eval=FALSE}
+data{
+  int<lower = 0> k;
+  int<lower = 0> N;
+  real<lower = 0> y[N];
+}
+
+parameters{
+  real<lower = 0> theta;
+}
+
+model{
+  // vectorization
+  target += N*log(k) + (k-1)*exponential_lcdf(y | theta) + exponential_lpdf(y | theta);
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanGames, "StanGames.rds")
+```
+
+```{r}
+StanGames <- readRDS("StanGames.rds")
+```
+
+```{r}
+dataList.games <- list(k = 25,
+                       N = length(games$winner),
+                       y = games$winner)
+
+fit.games <- stan(model_code = StanGames@model_code,
+                  data = dataList.games,
+                  chains = 5)
+```
+
+```{r}
+fit.games
+```
+
+## Complete Analysis
+### Problem 9 (Cancer Cluster)
+```{r}
+cancer <- tibble(
+  cases = c(4, 25, 8, 12),
+  expousure = c(14489, 5431, 1682, 3398)
+)
+```
+
+```{stan output.var="StanCancer", eval=FALSE}
+data{
+  int<lower = 0> N;
+  int<lower = 0> y[N];
+  real<lower = 0> t[N];
+}
+
+parameters{
+  real<lower = 0> theta;
+}
+
+model{
+  for (n in 1:N) {
+    target += poisson_lpmf(y[n] | t[n]*theta/100000) + weibull_lpdf(theta | 20, 335);
+  }
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanCancer, "StanCancer.rds")
+```
+
+```{r}
+StanCancer <- readRDS("StanCancer.rds")
+
+dataList.cancer <- list(N = nrow(cancer),
+                        y = cancer$cases,
+                        t = cancer$expousure)
+
+fit.cancer <- stan(model_code = StanCancer@model_code,
+                   data = dataList.cancer)
+```
+
+```{r}
+fit.cancer
+```
+
+```{r}
+cancer.df <- stan_to_df(fit.cancer)
+```
+
+Now, in order to investigate whether the numner of cases exceeded what might be expected by chance, one can construct a hypothesis test as follows.
+$$
+H_0: \theta \leq 326~~~~~~H_1: \theta > 326
+$$
+
+```{r}
+mean(cancer.df$theta < 326)
+```
+
+Therefore, as $\Pr(H_0|\boldsymbol{y}) = 1$, there is strong evidence that cancer rate in this town is below than the national value.
+
+### Problem 10 (Leukemia)
+
+```{r}
+leukemia <- read.csv("Leukemia.csv")
+```
+
+Assume the following prioris:
+$$
+\begin{aligned}
+t_i &\stackrel{i.i.d.}{\sim} Weibull(\alpha, \beta) \\
+\alpha &\sim N(1, 0.001) \\
+\beta &\sim Gamma(0.01, 0.01) \\
+\alpha &\perp\!\!\!\perp \beta
+\end{aligned}
+$$
+
+```{stan output.var="StanLeukemia", eval=FALSE}
+data{
+  int<lower = 0> N;
+  real<lower = 0> t[N];
+}
+
+parameters{
+  real<lower = 0> alpha;
+  real<lower = 0> beta;
+}
+
+model{
+  alpha ~ normal(1, 0.001);
+  beta ~ gamma(0.01, 0.01);
+  t ~ weibull(alpha, beta);
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanLeukemia, "StanLeukemia.rds")
+```
+
+```{r}
+StanLeukemia <- readRDS("StanLeukemia.rds")
+
+dataList.leukemia <- list(N = nrow(leukemia),
+                          t = leukemia$Survival)
+
+fit.leukemia <- stan(model_code = StanLeukemia@model_code,
+                     data = dataList.leukemia)
+
+survival.df <- stan_to_df(fit.leukemia)
+```
+
+```{r}
+t.new <- rweibull(nrow(survival.df), 
+                  shape = survival.df$alpha, scale = survival.df$beta)
+quantile(t.new, probs = c(0.025, 0.975)) %>%
+  round(3)
+```
+
+Therefore, given the data, it is 95% sure that the number of weeks a patient can survive (since diagonsis until one's death) is between 1.555 and 241.384.
+
+### Problem 11 (Body Temperature)
+
+```{r}
+temperature <- read.csv("Temperature.csv")
+```
+
+```{stan output.var="StanTemp", eval=FALSE}
+data{
+  int<lower = 0> N;
+  real y[N];
+}
+
+parameters{
+  real<lower = 0> mu;
+  real<lower = 0> tau;
+  real<lower = 0> phi;
+  real<lower = 0> theta;
+  real<lower = 0> alpha;
+  real<lower = 0> beta;
+}
+
+model{
+  beta ~ gamma(0.001, 0.001);
+  alpha ~ gamma(0.001, 0.001);
+  theta ~ gamma(0.001, 0.001);
+  phi ~ normal(98.6, 10);
+  tau ~ gamma(alpha, beta);
+  mu ~ normal(phi, sqrt(1/(theta*tau)));
+  y ~ normal(mu, sqrt(1/tau));
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanTemp, "StanTemp.rds")
+```
+
+```{r}
+StanTemp <- readRDS("StanTemp.rds")
+```
+
+```{r}
+dataList.temp <- list(N = nrow(temperature),
+                      y = temperature$Temperature)
+fit.temp <- stan(model_code = StanTemp@model_code,
+                 data = dataList.temp,
+                 chains = 5,
+                 iter = 20000)
+fit.temp
+```
+
+Divergent transitions exists after the burn-in period. Besides, the shrinking factor `Rhat` is large for $\tau$, $\phi$, $\alpha$, $\beta$.
+
+```{r}
+stan_trace(fit.temp, inc_warmup = TRUE)
+```
+
+Based on the plot above, chains are not mixing properly at least for $\theta$, $\tau$, and $\phi$.
+
+Therefore, it would be questionable to use the sample from the posterior.

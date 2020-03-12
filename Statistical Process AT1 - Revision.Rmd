@@ -1,0 +1,104 @@
+---
+title: "Statistical Process Analysis Task"
+author: "Scott Sun"
+date: "12/9/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("https://github.com/reyesem/reyesem.github.io/raw/master/files/MA483/MA483Setup.R")
+```
+
+Load the dataset and categorize eruptions lasting longer than 3 minutes as `long` and the rest of all as `short`. The head of the data frame is shown as the follows.
+
+```{r}
+data("faithful")
+faithful <- faithful %>%
+  mutate(grp = ifelse(eruptions > 3, "long", "short"))
+head(faithful, 5) %>%
+  knitr::kable()
+```
+
+## Graphics
+
+```{r, fig.width=5, fig.asp=0.5}
+ggplot(data = faithful,
+       mapping = aes(x = eruptions, y = waiting)) +
+  geom_point(aes(color = grp)) +
+  labs(x = "Length of eruption / min",
+       y = "Length of waiting / min",
+       color = "",
+       title = "Length of eruption vs. length of waiting") +
+  theme_bw()
+```
+
+\pagebreak
+Based on the graphic above, there exists two clusters in the observations, which align with the classification made at the beginning.
+
+## Parameters & Process
+
+Let $N \equiv \text{the total number of eruptions the visitor saw}$. $N \sim Geom(p)$, and $p$ is the probability of observing an eruption longer 3 minutes.
+
+Then, let 
+$$
+\begin{aligned}
+T &\equiv \text{total amount of time} \\
+U_i &\equiv \text{length of the}~i^{th}~\text{eruption},~i=1,...,N-1 \\
+W_i &\equiv \text{length of the}~i^{th}~\text{waiting},~i=1,...,N \\
+\end{aligned}
+$$
+
+Now, 
+$$
+T|N = \sum_{i=1}^{N-1}(U_i + W_i) + W_N
+$$
+Note that for $i = 1,...,N-1$, $U_i$ and $W_i$ are iid measurements for the `short` observations with means of $\mu_{U,short}$ and $\mu_{W,short}$ respectively. $W_N$ is the length of waiting for the last `long` observation with population mean of $\mu_{W,long}$.
+
+By Law of Total Expectation,
+$$
+\begin{aligned}
+\mu_T
+&= \mathrm{E}(T) \\
+&= \mathrm{E}(\mathrm{E}(T|N)) \\
+&= \mathrm{E}(\mathrm{E}(\sum_{i=1}^{N-1}(U_i + W_i) + W_N)) \\
+&= \mathrm{E}(\sum_{i=1}^{N-1}(\mathrm{E}(U_i)) + \mathrm{E}(W_i)) + \mu_{W,long} 
+~~~~ \text{, due to the indep.}\\
+&= (\mu_{U,short} + \mu_{W,short})\mathrm{E}(N-1) + \mu_{W,long} 
+~~~~ \text{, identically distr.}\\
+&= (\mu_{U,short} + \mu_{W,short})(\frac{1}{p}-1) + \mu_{W,long}
+\end{aligned}
+$$
+
+The parameters of interets are $p,~\mu_{U,short},~\mu_{W,short},~\mu_{W,long},\text{ and } \mu_T$.
+
+## Computation
+```{r}
+p_hat <- sum(faithful$grp == "long")/dim(faithful)[1]
+
+mu_ushort_hat <- faithful %>%
+  filter(grp == "short") %>%
+  select(eruptions) %>%
+  unlist() %>%
+  mean()
+
+mu_wshort_hat <- faithful %>%
+  filter(grp == "short") %>%
+  select(waiting) %>%
+  unlist() %>%
+  mean()
+
+mu_wlong_hat <- faithful %>%
+  filter(grp == "long") %>%
+  select(waiting) %>%
+  unlist() %>%
+  mean()
+```
+
+## Estimation
+```{r}
+mu_t_hat <- (mu_ushort_hat + mu_wshort_hat)*(1/p_hat - 1) + mu_wlong_hat
+print(mu_t_hat)
+```
+Based on the model, if the visitor wants to see an eruption lasting more than 3 minutes, it’s estimated that he/she has to wait for `r round(mu_t_hat, 3)` under the condition of just missing the previous eruption.
+

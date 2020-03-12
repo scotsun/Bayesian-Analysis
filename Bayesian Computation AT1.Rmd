@@ -1,0 +1,211 @@
+---
+title: "Bayesian Computation Analysis Task"
+author: "Scott Sun"
+date: "2/2/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("https://github.com/reyesem/reyesem.github.io/raw/master/files/MA483/MA483Setup.R")
+library(gridExtra)
+library(gamlss.dist)
+```
+
+```{r}
+fish <- read.csv("Fish.csv")
+```
+
+### Graphical Summary
+
+```{r, fig.width=5, fig.asp=0.6}
+ggplot(data = fish,
+       mapping = aes(x = count)) +
+  geom_bar(aes(y = ..prop..), fill = "orange") +
+  labs(x = "The number of fish caught by a group",
+       y = "Proportion",
+       title = "Distribution of a the number of fish caught by a group") +
+  theme_bw()
+```
+
+### Parameter and Model
+
+Let $Y:=$ the number of fish caught by a group. Then $Y_i \stackrel{i.i.d.}{\sim}$ a Zero-Inflated Poisson Distribution, whose probability mass function is
+$$
+f(y | \lambda, \theta) = 
+\begin{cases}
+  \theta + (1-\theta)e^{-\lambda} & y = 0\\
+  \\
+  (1-\theta)\frac{\lambda^ye^{-\lambda}}{y!} & y = 1,2...
+\end{cases}  
+$$
+
+Here, $\theta$ represents proportion of groups which choose not to fish, and $\lambda$ represents the average counts for those groups who fish.
+
+Now, define $\theta_0 = 1 - \theta$ as the proportion of groups choosing to fish.
+
+Since one of the objectives is to study the probability that a given fish group catch at least 2 fish, define
+$$
+\begin{aligned}
+p 
+&= \Pr(Y \geq 2) \\
+&= 1 - (\Pr(Y=0) + \Pr(Y=1)) \\
+&= 1 - (\theta + (1-\theta)e^{-\lambda}+(1-\theta)\lambda e^{-\lambda})
+\end{aligned}
+$$
+
+The variables of interest in the problem are $\theta_0$, and p.
+
+### Prior Distribution
+
+Based on the domains of $\theta_0$ and $\lambda$, we assume the following prior distributions.
+$$
+\begin{aligned}
+\theta_0 &\sim Beta(a, b) \\
+\lambda &\sim Gamma(s, t) \\
+\theta_0 &\perp\!\!\!\perp \beta
+\end{aligned}
+$$
+
+Then, $\{a, b, s, t\}$ can be calculated as follows.
+
+According to the spokesman, there roughly 75% $\pm$ 10% of groups choosing to fish.
+```{r}
+fn1 <- function(params) {
+  a <- params[1]
+  b <- params[2]
+  
+  eq1 <- a/(a+b)
+  eq2 <- a*b/((a+b)^2*(a+b+1))
+  
+  (0.75 - eq1)^2 + (0.1 - eq2)^2
+}
+
+betaOptParam <- optim(c(5, 5), fn1)
+betaOptParam <- betaOptParam$par %>%
+  round(3)
+names(betaOptParam) <- c("a", "b")
+betaOptParam
+```
+
+Apart from that, groups who fish catch approximately 5 $\pm$ 1 fish.
+
+```{r}
+fn2 <- function(params) {
+  s <- params[1]
+  t <- params[2]
+  
+  eq1 <- s*t
+  eq2 <- s*t^2
+  
+  (5 - eq1)^2 + (1 - eq2)^2
+}
+
+gammaOptParam <- optim(c(1, 1), fn2)
+gammaOptParam <- gammaOptParam$par %>%
+  round(3)
+names(gammaOptParam) <- c("s", "t")
+gammaOptParam
+```
+
+
+### Sample from the Posterior Distribution
+
+```{stan output.var="StanFish", eval=FALSE}
+data{
+  int <lower = 0> N;
+  int <lower = 0> y[N];
+}
+
+parameters{
+  real <lower = 0, upper = 1> theta;
+  real <lower = 0> lambda;
+}
+
+transformed parameters{
+  real <lower = 0> p;
+  real <lower = 0> theta_0;
+  p = 1 - (theta + (1-theta)*exp(-lambda)*(1+lambda));
+  theta_0 = 1 - theta;
+}
+
+model{
+  target += beta_lpdf(theta_0 | 0.656, 0.219) 
+              + gamma_lpdf(lambda | 25, 0.002);
+  
+  for (n in 1:N) {
+    if (y[n] == 0)
+      target += log_sum_exp(bernoulli_lpmf(1 | theta), 
+                            bernoulli_lpmf(0 | theta) 
+                              + poisson_lpmf(y[n] | lambda));
+    else
+      target += bernoulli_lpmf(0 | theta) 
+                  + poisson_lpmf(y[n] | lambda);
+  } 
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanFish, "StanFish.rds")
+```
+
+```{r}
+StanFish <- readRDS("StanFish.rds")
+dataList.fish <- list(N = nrow(fish),
+                      y = fish$count)
+fit.fish <- stan(model_code = StanFish@model_code,
+                 data = dataList.fish)
+```
+
+```{r, echo=FALSE}
+fit.fish
+```
+
+```{r}
+fishParams.df <- stan_to_df(fit.fish)
+```
+
+```{r, fig.asp=0.4}
+p1 <- qplot(data = fishParams.df,
+            x = fishParams.df$theta_0,
+            geom = "density",
+            fill = I("orange")) +
+  labs(x = expression(theta[0] ~ "| y"),
+       y = "Density",
+       title = "Posterior Distribution")
+
+p2 <- qplot(data = fishParams.df,
+            x = fishParams.df$p,
+            geom = "density",
+            fill = I("cornflowerblue")) +
+  labs(x = "p | y",
+       y = "Density",
+       title = "Posterior Distribution")
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+### Posterior Predictive
+
+```{r}
+y_star <- rZIP(n = nrow(fishParams.df), 
+               mu = fishParams.df$lambda,
+               sigma = fishParams.df$theta)
+y_star <- data.frame(y_star = y_star)
+```
+
+```{r, fig.width=5, fig.asp=0.6}
+qplot(data = y_star,
+      x = y_star,
+      geom = "density",
+      fill = I("brown2"),
+      alpha = I(0.8)) + 
+  labs(x = expression(y^"*"~"| y"),
+       y = "Density",
+       title = "Posterior Predictive Distribution")
+```
+
+### Conclusion
+
+Therefore, according to the inference result above, the 95% credible interval of $\theta_0|\boldsymbol{y}$ is (0.37, 0.49); the 95% credible interval of $p|\boldsymbol{y}$ is (0.37, 0.49).
+
