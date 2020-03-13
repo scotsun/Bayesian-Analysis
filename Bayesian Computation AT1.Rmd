@@ -7,7 +7,7 @@ output: pdf_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-source("https://github.com/reyesem/reyesem.github.io/raw/master/files/MA483/MA483Setup.R")
+source("Bayesian Initialization Script.R")
 library(gridExtra)
 library(gamlss.dist)
 ```
