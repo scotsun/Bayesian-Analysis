@@ -1,0 +1,181 @@
+---
+title: 'Statistical Process Homework'
+author: "Scott Sun"
+date: "12/5/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("Bayesian Initialization Script.R")
+library(MultNonParam)
+```
+
+## Concept
+### Problem 2 (Probability Model)
+
+Let $p_i = \mathrm{Pr}(X=i)$ where $i = 1,2,3,~\text{and}~4$. 
+
+So under model (A), $p_1=p_2=p_3=p_4=0.25$; under model (B), $p_1=0.1,~p_2=0.2,~p_3=0.3,~~p_4=0.4$; under model (C), $p_1=0.48,~p_2=0.24,~p_3=0.16,~p_4=0.12$
+
+Compute sample proportion $\hat{p}_i$ for the 100 rolls as the follows.
+$$
+\begin{aligned}
+\hat{p}_1 &= 0.24 \\
+\hat{p}_2 &= 0.28 \\
+\hat{p}_3 &= 0.22 \\
+\hat{p}_4 &= 0.26 \\
+\end{aligned}
+$$
+According to these sample proportions, probability model (A) seems the most reasonable.
+
+### Problem 3 (Parameters)
+
+In the situation where both groups have some extreme outliers, these outliers will strongly influence the sample means. As the result, the sample means of two groups may not represent the population means. For instance, suppose we have two samples from two completely different distribution, or sub-population.
+```{r}
+a <- c(1, 2, 3, 4, 5, 6, 7)
+b <- c(1, 1, 1, 1, 1, 1, 22)
+```
+Now, the two samples share exactly the same sample mean, `r mean(a)`, but it does help us to conduct a comparison between to two groups. Thus, in this case, mean is not the best parameter to characterize distributions, but medians would be more appropiate for the comparison. In our example, $median(a) = 4$ and $median(b) = 1$, so comparing sample medians are more meaningful than comparing sample means.
+
+### Problem 4 (Study Habits)
+
+According to the result from the study, it is true that sample mean of Group A is 13 points higher than that of Group B. However, this does not necessarily indicate that anyone adopting Group A's study habit will have higher score. The student's reasoning is wrong, since he does not take individual variability into account.
+
+## Computation
+### Problem 5 (Estimating Body Fat)
+
+```{r}
+bodyfat <- read.csv("BodyFatPercentage.csv")
+```
+
+Let $\mu$ be the mean BMI of all adolescent females in the town and $\bar{x}$ be the sample mean.
+
+Then, we can construct a hypothesis test with $\alpha = 0.05$ as the follows,
+$$
+\begin{aligned}
+H_0 &: \mu \leq 25 \\
+H_1 &: \mu > 25 \\
+\end{aligned}
+$$
+
+Since the sample size $n = 92$, $\frac{\bar{x}-\mu}{s/\sqrt{n}} \to N(0,1)$ by the C.L.T..
+```{r}
+z <- (mean(bodyfat$BMI) - 25) / (sd(bodyfat$BMI)/sqrt(92))
+1 - pnorm(z, mean = 0, sd = 1)
+```
+
+Since p-value = 1 > $\alpha$, we fail to reject $H_0$. Therefore, we do not have evidence to say the average adolescent female BMI is greater than 25.
+
+### Problem 6 (Estimating Body Fat, Cont.)
+
+According to the histogram below, the most likely values are within (17,23).
+
+```{r, fig.width=5, fig.asp=0.6, message=FALSE}
+ggplot(data = bodyfat, 
+       mapping = aes(x = BMI)) +
+  geom_histogram() + 
+  labs(x = "BMI",
+       y = "Frequency",
+       title = "Adolescent Females BMI") +
+  theme_bw()
+```
+
+
+### Problem 8 (Horse Kicks)
+
+Let $x_i$ be the number of death in the $i^{th}$ corps. Then, $\bar{x} = \frac{1}{280}\sum_{i=1}^{280}x_i$, and the calculation is shown as the follows.
+```{r}
+1/280 * (144*0 + 91*1 + 32*2 + 11*3 + 2*4)
+```
+However, the estimated average number of deaths resulting from a horse-kick above does not reflect the situation of each year during the period.
+
+## Complete Analysis
+### Problem 9 (Home Repairs)
+
+```{r}
+roof <- structure(
+  list(Contractor =
+         c("A", "B", "A", "B", "A", "B", "A", "B", "A", "B",
+           "A", "B", "A", "B", "A", "B", "A", "B", "A", "B",
+           "A", "B", "A", "B", "A", "B", "A", "B", "A", "B"),
+       `Difference from Estimate` =
+         c(1563, 2130, 5886, 564, -1542, 814, 2719, 1259, 4726, 1202,
+           6276, 919, -432, 1154, 5026, 2032, -694, 2269, 287, 1994,
+           1853, 2076, 115, 3723, -4302, 2791, 3705, 2709, 2678, 2148)),
+  row.names = c(NA, -30L), class = c("tbl_df", "tbl", "data.frame"))
+```
+
+```{r, fig.width=6.3, fig.asp=0.5}
+ggplot(data = roof,
+       mapping = aes(x = Contractor, y = `Difference from Estimate`)) +
+  geom_boxplot(aes(fill = Contractor)) +
+  labs(x = "",
+       y = "Difference from Estimate",
+       title = "Difference from Estimate provided by clients from the Constractor") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+Based on the side-by-side boxplot above, there is no extreme outlier in both groups. Thus, it's reasonable compare the two contractors via their average differences from estimate. According to the plot itself, thre exists no difference between the two group means. However, contractor B's differences from estimates tend to have less variability, which means that the price is more stable. Hence, it would be recommanded to hire contractor B.
+
+### Problem 10 (Clothing Store)
+
+```{r, message=FALSE}
+clothes <- read_csv("ClothingStore.csv")
+sales <- clothes$`Total sales`
+```
+
+Let $\mu$ denote the average total sales per customer over the course of a year. Now, we can form a hypothesis test with $\alpha = 0.05$ as the follows,
+$$
+\begin{aligned}
+H_0 &: \mu \leq 475 \\
+H_1 &: \mu > 475
+\end{aligned}
+$$
+
+Since the sample size $n = 5000$, $\frac{\bar{x}-\mu}{s/\sqrt{n}} \to N(0,1)$ by the C.L.T..
+```{r}
+z <- (mean(sales) - 475) / (sd(sales)/sqrt(5000))
+(1 - pnorm(z, mean = 0, sd = 1)) %>% round(3)
+```
+
+Since p-value = 0.351 > $\alpha$, we fail to reject $H_0$. Therefore, we do not have evidence to say the average total sales per customer over the course of the past year is greater than 475. As the result, there is no evidence to support her receiving a bonus.
+
+### Problem 11 (Lorem Ipsum)
+
+After using the generator to output a random Lorem Ipsem text of 532 words, I stored it in a `.txt` file. Then, I loaded the data from the text and made several steps of manipulation. First, I removed all the blank space and punctuations. Second, I extracted all words from the text. Third, I computed length of each word and stored the result in a data frame.
+
+```{r}
+loremIpsum <- readLines("Lorem Ipsum.txt", warn = FALSE)
+loremIpsum <- loremIpsum[-which(loremIpsum=="")]
+
+loremIpsum <- loremIpsum %>%
+   str_replace_all(pattern = "[[:punct:]]", replacement = "")
+loremIpsumWords <- str_extract_all(loremIpsum,
+                                    pattern = "[[:alpha:]]+") %>% unlist()
+wordLengthDat <- loremIpsumWords %>%
+  sapply(nchar) %>%
+  unname()
+wordLengthDat <- data.frame("len" = wordLengthDat)
+```
+
+According to the histogram below, most words tend to have length of 4 or 5. The sample distribution spread ranges from 1 to 12, and it is slightly right skewed.
+
+```{r, message=FALSE, fig.width=5}
+ggplot(data = wordLengthDat,
+       mapping = aes(x = len)) +
+  geom_bar() +
+  labs(x = "length of word",
+       y = "frequency",
+       title = "Length of Words in a Random Lorem Ipsum") +
+  scale_x_continuous(breaks = seq(1,11,2)) +
+  theme_bw()
+```
+
+```{r}
+mean(wordLengthDat$len) %>%
+  round(0)
+```
+
+Therefore, the sample estimate of the average length of a word from Lorem Ipsum is 6.

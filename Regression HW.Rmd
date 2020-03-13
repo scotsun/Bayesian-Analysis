@@ -13,7 +13,7 @@ options(mc.cores = 3)
 
 ## Concepts
 ### Problem 2 (Accessing Conditions)
-Based on the residual vs. fitted plot, points deviate from the 0 horizontal line systematically. Therefore, the errors do not have mean of 0, and this implies that the regression model is problematic.
+Based on the residual vs. fitted plot, points deviate from the 0 horizontal line systematically. Therefore, the errors do not have mean of 0. This implies that the response do not have linear relationship with the predictor; instead, the relationship might be cubic or at a higher order.
 
 ### Problem 3 (Model Specification)
 The model can be rewrite as follows.
@@ -202,10 +202,13 @@ fit.autospecs
 Therefore, after we accounted for the size of vehicles, fuel type has larger influence on the cost than fuel economy.
 
 ### Problem 10 (Air Quality)
+### Problem 10
 
 ```{r}
 data("airquality")
-airquality <- filter(airquality, !is.na(Ozone))
+airquality <- filter(airquality, !is.na(Ozone),
+                                 !is.na(Wind),
+                                 !is.na(Temp))
 ```
 
 According to the context, assume a model as follows.
@@ -244,8 +247,10 @@ parameters{
 }
 
 model{
-  target += log(nu - 1) + (nu - 1);
-  target += student_t_lpdf(Ozone | nu, Qstar*theta + beta0, sigma);
+  real nuMinusOne;
+  nuMinusOne = nu - 1;
+  nuMinusOne ~ exponential(1);
+  Ozone ~ student_t(nu, Qstar*theta + beta0, sigma);
 }
 
 generated quantities{
@@ -269,80 +274,91 @@ dataList.air <- list(N = nrow(airquality),
                      X = cbind(airquality$Wind,
                                airquality$Temp))
 fit.air <- stan(model_code = StanAir@model_code,
-                data = dataList.air,
-                control = list(adapt_delta = 0.99))
+                data = dataList.air)
 fit.air
 ```
 
-The process has divergent transitions after the warmup period, Besides, Rhat values were extremly high for all parameters. Therefore, we should not rely on the results.
+```{r}
+beta_hat <- as.data.frame(fit.air) %>%
+  select(starts_with("beta")) %>%
+  apply(2, median)         ## use posterior median as the estimates for paramters
+
+airquality <- airquality %>%
+  mutate(Fitted = beta_hat[1] + beta_hat[2]*Wind + beta_hat[3]*Temp,
+         Residuals = Ozone - Fitted)
+```
+
+```{r, fig.width=5, fig.asp=0.6}
+ggplot(data = airquality,
+       aes(x = Fitted, y = Residuals)) +
+  geom_point() +
+  geom_smooth(method = "loess", formula = y ~ x) +
+  labs(x = "Predicted mean ozone reading / ppb",
+       y = "Residuals",
+       title = "Residuals vs. predicted value") +
+  theme_bw()
+```
+
+The curve trend implies the assumption of linear relationship is not approprate. Besides, the fan-shape pattern indicates the response has heteroscedasticity, so the assumption of constant variance also fails. Therefore, the model is not appropriate, and we should not rely on the results.
 
 ### Problem 12 (Body Fat)
-
+### Problem 12
 ```{r}
 bodyfat <- read.csv("BodyFatPercentage.csv")
 ```
 
-```{stan output.var="StanBMI", eval=FALSE}
+```{stan output.var="StanBodyfat", eval=FALSE}
 data{
  vector[3] a;
  int<lower = 0> N;
  int<lower = 0, upper = 1> Activity[N, 3];
  vector[N] BMI;
+ vector[N] Bodyfat;
 }
 
 parameters{
   simplex[3] theta;
   real alpha[3];
   real<lower = 0> phi;
-}
-
-model{
-  real eta;
-  target += dirichlet_lpdf(theta | a);
-  target += normal_lpdf(alpha | 22, 4);
-  for (i in 1:N) {
-    target += multinomial_lpmf(Activity[i,] | theta);
-    eta = a[1]*Activity[i,1] + a[2]*Activity[i,2] + a[3]*Activity[i,3];
-    target += normal_lpdf(BMI[i] | eta, phi);
-  }
-}
-```
-
-```{stan output.var="StanBodyfat", eval=FALSE}
-data{
-  int<lower = 0> N;
-  vector[N] Bodyfat;
-  int<lower = 0, upper = 1> Activity[N, 3];
-  vector[N] BMI;
-}
-
-parameters{
+  
   vector[5] beta;
   real<lower = 0> sigma;
 }
 
 model{
+  real eta;
   real mu;
+  
+  target += dirichlet_lpdf(theta | a);
+  target += normal_lpdf(alpha | 22, 4);
+  
   for (j in 3:5) {
-    beta[j] ~ normal(30, 4);
+    target += normal_lpdf(beta[j] | 30, 4);
   }
+  
   for (i in 1:N) {
+    target += multinomial_lpmf(Activity[i,] | theta);
+    eta = alpha[1]*Activity[i,1] + alpha[2]*Activity[i,2] + alpha[3]*Activity[i,3];
+    target += normal_lpdf(BMI[i] | eta, phi);
+    
     mu = beta[1]*(BMI[i] - mean(BMI)) + beta[2]*(BMI[i] - mean(BMI))^2 +
       beta[3]*Activity[i, 1] + beta[4]*Activity[i, 2] + 
       beta[5]*Activity[i, 3];
-    Bodyfat[i] ~ normal(mu, sigma);  
+    target += normal_lpdf(Bodyfat[i] | mu, sigma);
   }
 }
 
+generated quantities{
+  real newBMI;
+  newBMI = normal_rng(alpha[3], phi);
+}
 ```
 
 ```{r, eval=FALSE}
-saveRDS(StanBMI, "StanBMI.rds")
 saveRDS(StanBodyfat, "StanBodyfat.rds")
 ```
 
 ```{r}
-StanBMI <- readRDS("StanBMI.rds")
 StanBodyfat <- readRDS("StanBodyfat.rds")
 ```
 
@@ -350,25 +366,16 @@ StanBodyfat <- readRDS("StanBodyfat.rds")
 low <- ifelse(bodyfat$Activity_Level == "low", 1, 0)
 medium <- ifelse(bodyfat$Activity_Level == "medium", 1, 0)
 high <- ifelse(bodyfat$Activity_Level == "high", 1, 0)
-dataList.BMI <- list(a = c(1, 1, 1),
-                     N = nrow(bodyfat),
-                     Activity = cbind(low, medium, high),
-                     BMI = bodyfat$BMI)
-fit.bmi <- stan(model_code = StanBMI@model_code,
-                data = dataList.BMI)
-```
 
-```{r}
-dataList.bodyfat <- list(N = nrow(bodyfat),
-                         Bodyfat = bodyfat$Percent_Fat,
+dataList.bodyfat <- list(a = c(1, 1, 1),
+                         N = nrow(bodyfat),
                          Activity = cbind(low, medium, high),
-                         BMI = bodyfat$BMI)
-fit.bodyfat <- stan(model_code = StanBodyfat@model_code,
-                    data = dataList.bodyfat)
-```
+                         BMI = bodyfat$BMI,
+                         Bodyfat = bodyfat$Percent_Fat)
 
-```{r}
-fit.bmi
+fit.bodyfat <- stan(model_code = StanBodyfat@model_code,
+                    data = dataList.bodyfat,
+                    chains = 4)
 ```
 
 ```{r}
@@ -376,18 +383,20 @@ fit.bodyfat
 ```
 
 ```{r}
-df1 <- as.data.frame(fit.bmi)
-df1 <- df1[, -ncol(df1)]
-df2 <- as.data.frame(fit.bodyfat)
-df2 <- df2[, -ncol(df2)]
-df <- cbind(df1, df2)
+bodyfatParam.df <- as.data.frame(fit.bodyfat)
 
-newBMI <- rnorm(nrow(df), df$`alpha[3]`, df$phi)
-newBodyfat <- rnorm(
-  nrow(df),
-  df$`beta[1]`*(newBMI - mean(bodyfat$BMI)) + df$`beta[2]`*(newBMI - mean(bodyfat$BMI)) + df$`beta[5]`,
-  df$sigma)
-hdi(newBodyfat)
+beta1 <- bodyfatParam.df$`beta[1]`
+beta2 <- bodyfatParam.df$`beta[2]`
+beta5 <- bodyfatParam.df$`beta[5]`
+sigma <- bodyfatParam.df$sigma
+newbmi <- bodyfatParam.df$newBMI
+
+mu <- beta1*(newbmi - mean(bodyfat$BMI)) + beta2*(newbmi - mean(bodyfat$BMI))^2 + beta5
 ```
 
-**Clearly it is incorrect**
+Therefore, the 95% credible interval of the estimated body fat percentage of a highly active young woman is calculated as follows.
+```{r}
+rnorm(nrow(bodyfatParam.df), mu, sigma) %>%
+  hdi(0.95) %>%
+  round(3)
+```

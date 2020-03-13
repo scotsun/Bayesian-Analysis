@@ -1,0 +1,511 @@
+---
+title: "Comparing Groups"
+author: "Scott Sun"
+date: "2/5/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("https://github.com/reyesem/reyesem.github.io/raw/master/files/MA483/MA483Setup.R")
+set.seed(1000)
+```
+
+## Concepts 
+### Problem 1 (Test Scores)
+In the study students will be randomly assigned to have one of the two exams so that individuals inherit effect on the response do not need to be incorperated into the model. Thus, comparative groups are made: one recieves Dr. Reyes's version while the other recieves Dr. Evans's version. Replication is utilized as in each group there would be multiple students. The blocking variable in this study would the class section or instructor.
+
+### Problem 2 (Vision Exams)
+The model is incorrect since it assumes observations are independent. However, for each patients, the right eye and the left eye should be related. Therefore, the likelihood model is problematic.
+
+### Problem 4 (t vs. Normal)
+If the response variable has outliers, the distribution will have heavier tails. In such case, t-distribution is preferred and used to capture the tails. Then, the analysis is more robust.
+
+## Computations
+### Problem 5 (BP Oil Spill)
+
+```{r}
+oil <- tibble(
+  `Number No` = c(39, 87),
+  `Number Yes` = c(15, 16),
+  Status = c("wildlife cleaning", "administration")
+)
+```
+
+A model is constructed as follows.
+$$
+x_i = \left\{
+        \begin{array}{ll}
+            1 & \text{if i-th subject is a wildlife volunteer} \\
+            2 & \text{if i-th subject is a adminstrative volunteer}
+      \end{array}
+    \right.\\
+$$
+$$
+\begin{aligned}
+Y_i|\theta_{x_i} &\sim Ber(\theta_{x_i}) \\
+\theta_{x_i} &\stackrel{iid}{\sim} U(0,1)
+\end{aligned}
+$$
+
+```{stan output.var="StanOil", eval=FALSE}
+data{
+  int<lower = 0> n[2]; //Number of No's
+  int<lower = 0> y[2]; //Number of Yes's
+}
+
+parameters{
+  real<lower = 0, upper = 1> theta[2];
+}
+
+transformed parameters{
+  real<lower = 0> eta;
+  eta = (theta[1]/(1 - theta[1]))/(theta[2] / (1 - theta[2]));
+}
+
+model{
+  for (i in 1:2) {
+    target += binomial_lpmf(y[i] | y[i]+n[i], theta[i]);
+  }
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanOil, "StanOil.rds")
+```
+
+```{r}
+StanOil <- readRDS("StanOil.rds")
+```
+
+```{r}
+dataList.oil <- list(n = oil$`Number No`,
+                     y = oil$`Number Yes`)
+fit.oil <- stan(model_code = StanOil@model_code,
+                data = dataList.oil)
+fit.oil
+```
+
+```{r}
+oilParam.df <- as.data.frame(fit.oil)
+```
+
+```{r}
+median(oilParam.df$eta) %>%
+  round(3)
+```
+
+### Problem 6 (BP Oil Spill, Cont.)
+
+Prob 5 is based on the assumption for a model under $H_1$. Now, fit a model under $H_0$.
+
+```{stan output.var="StanOil1", eval=FALSE}
+data{
+  int<lower = 0> n[2]; //Number of No's
+  int<lower = 0> y[2]; //Number of Yes's
+}
+
+parameters{
+  real<lower = 0, upper = 1> theta;
+}
+
+model{
+  for (i in 1:2) {
+    target += binomial_lpmf(y[i] | y[i]+n[i], theta);
+  }
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanOil1, "StanOil1.rds")
+```
+
+```{r}
+StanOil1 <- readRDS("StanOil1.rds")
+```
+
+```{r}
+fit.oil1 <- stan(model_code = StanOil1@model_code,
+                 data = dataList.oil)
+fit.oil1
+```
+
+```{r}
+evidence.oil.0 <- bridge_sampler(fit.oil, silent = TRUE)
+evidence.oil.1 <- bridge_sampler(fit.oil1, silent = TRUE)
+bf.oil <- bf(evidence.oil.0, evidence.oil.1, log = TRUE)
+bf.oil$bf %>%
+  round(3)
+```
+
+### Problem 8 (Food Production)
+```{r}
+milkBacteria <- read.csv("MilkBacteria.csv")
+```
+
+```{stan output.var="StanMilkBacteria", eval=FALSE}
+data{
+  int<lower = 0> N;
+  int<lower = 1, upper = 3> solution[N];
+  int<lower = 1, upper = 4> day[N];
+  int<lower = 0> y[N];
+}
+
+parameters{
+  real mu[3];
+  real alpha[4];
+  real sigma[3];
+}
+
+model{
+  target += normal_lpdf(mu | 15, 25);
+  target += normal_lpdf(alpha | 0, 1);
+  target += gamma_lpdf(sigma | 0.01, 0.01);
+  for (i in 1:N) {
+    target += normal_lpdf(y[i] | mu[solution[i]] + alpha[day[i]], sigma[solution[i]]);
+  }
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanMilkBacteria, "StanMilkBacterial.rds")
+```
+
+```{r}
+StanMilkBacteria <- readRDS("StanMilkBacterial.rds")
+```
+
+```{r}
+milkBacteria$Solution <- recode(milkBacteria$Solution,
+                                "Solution A" = 1,
+                                "Solution B" = 2,
+                                "Solution C" = 3)
+
+dataList.milkBacteria <- list(N = nrow(milkBacteria),
+                              solution = milkBacteria$Solution,
+                              day = milkBacteria$Day,
+                              y = milkBacteria$CFU)
+
+fit.milkBacteria <- stan(model_code = StanMilkBacteria@model_code, 
+                         data = dataList.milkBacteria,
+                         control = list(adapt_delta = 0.9))
+fit.milkBacteria
+```
+
+## Complete Analysis
+### Problem 9 (Skipping Class)
+```{r}
+absences <- tribble(
+  ~Student, ~Greek, ~`Number of Absences`,
+   1, "Yes", 13,
+   2, "Yes",  1,
+   3, "Yes",  0,
+   4, "Yes",  0,
+   5, "Yes",  5,
+   6, "Yes",  6,
+   7, "Yes",  4,
+   8, "Yes", 10,
+   9, "No",   7,
+  10, "No",   0,
+  11, "No",   4,
+  12, "No",   4,
+  13, "No",   2
+  )
+
+absences$Greek <- recode(absences$Greek,
+                         "Yes" = 1,
+                         "No" = 2)
+```
+
+Since
+$$
+\begin{aligned}
+\theta_{x_i} \sim Beta(a, b) \\
+E(\theta_{x_i}|a,b) = 0.1 \\
+\end{aligned}
+$$
+Then, as $\frac{a}{a+b} = 0.1$, $b=9a$.
+
+Now,
+$$
+\begin{aligned}
+Var(\theta_{x_i}|a,b) 
+&= \frac{ab}{(a+b)^2(a+b+1)} \\
+&= \frac{9}{1000a + 100} 
+\end{aligned}
+$$
+Since we want $Var(\theta_{x_i}|a,b)$ to be as variable as possible, let $a=0.001$ so that $b = 0.0891$.
+
+```{r}
+dataList.absenses <- list(N = nrow(absences),
+                          group = absences$Greek,
+                          absense = absences$`Number of Absences`)
+```
+
+```{stan output.var="StanAbsences1", eval=FALSE}
+data{
+  int<lower = 0> N;
+  int<lower = 1, upper = 2> group[N];
+  int<lower = 0> absense[N];
+}
+
+parameters {
+  real<lower = 0, upper = 1> theta[2];
+}
+
+model{
+  target += beta_lpdf(theta | 0.001, 0.0891);
+  for (i in 1:N) {
+    target += binomial_lpmf(absense[i] | 40, theta[group[i]]);
+  }
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanAbsences1, "StanAbsenses1.rds")
+```
+
+```{r}
+StanAbsenses1 <- readRDS("StanAbsenses1.rds")
+```
+
+```{r}
+fit.absenses1 <- stan(model_code = StanAbsenses1@model_code,
+                      data = dataList.absenses)
+```
+
+```{r}
+fit.absenses1
+```
+
+```{r}
+absParam.df <- as.data.frame(fit.absenses1)
+
+abs.sumlatn <- rbinom(6*nrow(absParam.df), 40, absParam.df$`theta[1]`) %>%
+  matrix(nrow = nrow(absParam.df), ncol = 6)
+
+abs.sumlatn <- abs.sumlatn %>%
+  cbind(
+    rbinom(9*nrow(absParam.df), 40, absParam.df$`theta[2]`) %>%
+      matrix(nrow = nrow(absParam.df), ncol = 9)
+  )
+
+apply(abs.sumlatn, 1, sum) %>% 
+  hdi(credMass = 0.95)
+```
+
+Therefore, the 95% HDI for the total number of classes that will be missed by all these students is (38, 80).
+
+### Problem 10 (Apple Harvest)
+```{r}
+apples <- tibble(
+  Tree =
+    c(1, 1, 1, 1, 1, 2, 2, 2, 2, 2,
+      3, 3, 3, 3, 3, 4, 4, 4, 4, 4,
+      5, 5, 5, 5, 5, 6, 6, 6, 6, 6,
+      7, 7, 7, 7, 7, 8, 8, 8, 8, 8,
+      9, 9, 9, 9, 9, 10, 10, 10, 10, 10),
+  Variety =
+    c("Fuji", "Fuji", "Fuji", "Fuji", "Fuji",
+      "Fuji", "Fuji", "Fuji", "Fuji", "Fuji",
+      "Fuji", "Fuji", "Fuji", "Fuji", "Fuji",
+      "Fuji", "Fuji", "Fuji", "Fuji", "Fuji",
+      "Fuji", "Fuji", "Fuji", "Fuji", "Fuji",
+      "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp",
+      "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp",
+      "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp",
+      "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp",
+      "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp", "Honeycrisp"),
+  Count =
+    c(1, 2, 1, 0, 2, 2, 5, 2, 0, 2,
+      2, 1, 4, 0, 3, 4, 3, 2, 4, 1,
+      2, 0, 2, 1, 3, 1, 1, 1, 1, 1,
+      0, 2, 0, 1, 0, 0, 1, 0, 0, 2,
+      2, 1, 0, 2, 2, 3, 0, 1, 2, 2))
+
+apples$Variety <- recode(apples$Variety,
+                         "Fuji" = 1,
+                         "Honeycrisp" = 2)
+```
+
+Assume
+$$
+Y_{i,j}|\lambda_i \sim Poisson(\lambda_i)
+$$
+where
+$$
+\lambda_i = \theta_{x_i} + \alpha_i
+$$
+According to owners strong feeling about $\alpha_i$ and their vague sense for $\theta_{x_i}$,
+$$
+\begin{aligned}
+\alpha_i &\sim N(0, 0.2^2) \\
+\theta_{x_i} &\sim Gamma(a,b) ~~~ \text{where}~E(\theta_{x_i})=3/2~\text{and}~Var(\theta_{x_i}) = 1 \\
+\alpha_i &\perp\!\!\!\perp \theta_{x_i}
+\end{aligned}
+$$
+Now, we can solve for a and b through the following system of equations.
+$$
+\begin{cases}
+\frac{a}{b} = \frac{3}{2} \\
+\\
+\frac{a}{b^2} = 1
+\end{cases}
+$$
+
+```{r}
+fn2 <- function(params) {
+  a <- params[1]
+  b <- params[2]
+  
+  eq1 <- a/b
+  eq2 <- a/b^2
+  
+  (3/2 - eq1)^2 + (1 - eq2)^2
+}
+
+optimParam.apple <- optim(c(3,2), fn2)
+optimParam.apple$par %>%
+  round(3)
+```
+
+```{stan output.var="StanApple", eval=FALSE}
+data{
+  int<lower = 0> N;
+  int<lower = 0> count[N];
+  int<lower = 1, upper = 2> variety[N];
+  int<lower = 1, upper = 10> tree[N];
+}
+
+parameters{
+  real<lower = 0> theta[2];
+  real<lower = -min(theta)> alpha[10]; 
+}
+
+transformed parameters{
+  real<lower = 0> lambda[10];
+  for (i in 1:10) {
+    if (i <= 5)
+      lambda[i] = theta[1] + alpha[i];
+    else
+      lambda[i] = theta[2] + alpha[i];
+  }
+}
+
+model{
+  target += gamma_lpdf(theta | 2.25, 1.50);
+  for (i in 1:N) {
+    target += normal_lpdf(alpha[tree[i]] | 0, 0.2);
+  }
+  for (i in 1:N) {
+    target += poisson_lpmf(count[i] | lambda[tree[i]]);
+  }
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanApple, "StanApple.rds")
+```
+
+```{r}
+StanApple <- readRDS("StanApple.rds")
+```
+
+```{r}
+dataList.apple <- list(N = nrow(apples),
+                       count = apples$Count,
+                       variety = apples$Variety,
+                       tree = apples$Tree)
+fit.apple <- stan(model_code = StanApple@model_code,
+                  data = dataList.apple, 
+                  control = list(adapt_delta = 0.95),
+                  warmup = 2500,
+                  iter = 5000,
+                  chains = 4)
+```
+
+```{r}
+fit.apple
+```
+
+From the output, we can learn that Fuji apple produce more than the Honeycrisp apple.
+
+### Problem 11 (Housing Prices)
+
+```{r}
+house <- read.csv("RealEstate.csv")
+house$Pool <- recode(house$Pool,
+                     '0' = 1,
+                     '1' = 2)
+dataList.house <- list(N = nrow(house),
+                       pool = house$Pool,
+                       price = house$Price)
+```
+
+```{stan output.var="StanHouseLogN", eval=FALSE}
+data{
+  int<lower = 0> N;
+  int<lower = 1, upper = 2> pool[N];
+  real<lower = 0> price[N];
+}
+
+parameters{
+  real<lower = 0> mu[2];
+  real<lower = 0> sigma[2];
+}
+
+model{
+  target += normal_lpdf(mu | 12.5, 0.06);
+  target += gamma_lpdf(sigma | 18, 40);
+  for (i in 1:N) {
+    target += lognormal_lpdf(price[i] | mu[pool[i]], sigma[pool[i]]);  
+  }
+}
+```
+
+```{stan output.var="StanHouseGma", eval=FALSE}
+data{
+  int<lower = 0> N;
+  int<lower = 1, upper = 2> pool[N];
+  real<lower = 0> price[N];
+}
+
+parameters{
+  real<lower = 0> alpha[2];
+  real<lower = 0> beta[2];
+}
+
+model{
+  target += gamma_lpdf(alpha | 21, 7.7);
+  target += gamma_lpdf(beta | 35, 3000000);
+  for (i in 1:N) {
+    target += gamma_lpdf(price[i] | alpha[pool[i]], beta[pool[i]]);
+  }
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(StanHouseLogN, "StanHouseLogN.rds")
+saveRDS(StanHouseGma, "StanHouseGma.rds")
+```
+
+```{r}
+StanHouseLogN <- readRDS("StanHouseLogN.rds")
+StanHouseGma <- readRDS("StanHouseGma.rds")
+```
+
+```{r}
+fit.houseLogN <- stan(model_code = StanHouseLogN@model_code,
+                      data = dataList.house)
+fit.houseGma <- stan(model_code = StanHouseGma@model_code,
+                     data = dataList.house)
+```
+
+```{r}
+evidence.houseLogN <- bridge_sampler(fit.houseLogN, silent = TRUE)
+evidence.houseGma <- bridge_sampler(fit.houseGma, silent = TRUE)
+post_prob(evidence.houseLogN, evidence.houseGma, 
+          model_names = c("Lognormal", "Gamma")) %>%
+  round(3)
+```
+Therefore, based on the calculation, I would recommend to model the likelihood with a Lognormal distribution.
